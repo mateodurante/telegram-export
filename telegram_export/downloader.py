@@ -45,7 +45,7 @@ class Downloader:
         self.client = client
         self.loop = loop or asyncio.get_event_loop()
         self.max_size = config.getint('MaxSize')
-        self.config_download_media = config.getint('DownloadMedia')
+        self.config_download_media = config.getboolean('DownloadMedia')
         self.types = {x.strip().lower()
                       for x in (config.get('MediaWhitelist') or '').split(',')
                       if x.strip()}
