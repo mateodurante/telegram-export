@@ -183,6 +183,25 @@ class Dumper:
                       "Removed TEXT NOT NULL,"
                       "PRIMARY KEY (ContextID, DateUpdated))")
 
+            c.execute("CREATE TABLE ChatParticipantRights("
+                      "ContextID INT NOT NULL,"
+                      "UserID INT NOT NULL,"
+                      "DateUpdated INT NOT NULL,"
+                      "Type TEXT,"
+                      "InviterID INT,"
+                      "PromotedBy INT,"
+                      "RightManageCall INT,"
+                      "RightInviteUsers INT,"
+                      "RightPinMessages INT,"
+                      "RightChangeInfo INT,"
+                      "RightDeleteMessages INT,"
+                      "RightBanUsers INT,"
+                      "RightEditMessages INT,"
+                      "RightAddAdmins INT,"
+                      "RightInviteLink INT,"
+                      "RightPostMessages INT,"
+                      "PRIMARY KEY (ContextID, UserID))")
+
             c.execute("CREATE TABLE Message("
                       "ID INT NOT NULL,"
                       "ContextID INT NOT NULL,"
@@ -502,6 +521,55 @@ class Dumper:
 
         c.execute("INSERT INTO ChatParticipants VALUES (?, ?, ?, ?)", row)
         return added, removed
+
+    def dump_participants_rigths(self, context_id, participants):
+        """
+        Dumps the delta between the last dump of IDs for the given context ID
+        and the current input user IDs.
+        """
+
+        c = self.conn.cursor()
+
+        for user_full in participants:
+            p = user_full.participant
+            if hasattr(p, 'admin_rights'):
+                pr = p.admin_rights
+                values = (context_id,
+                          user_full.id,
+                          round(time.time()),
+                          p.__class__.__name__,
+                          getattr(p, 'inviter_id', None),
+                          getattr(p, 'promoted_by', None),
+                          pr.manage_call,
+                          pr.invite_users,
+                          pr.pin_messages,
+                          pr.change_info,
+                          pr.delete_messages,
+                          pr.ban_users,
+                          pr.edit_messages,
+                          pr.add_admins,
+                          pr.invite_link,
+                          pr.post_messages
+                          )
+            else:
+                values = (context_id,
+                          user_full.id,
+                          round(time.time()),
+                          p.__class__.__name__,
+                          getattr(p, 'inviter_id', None),
+                          getattr(p, 'promoted_by', None),
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None,
+                          None
+                          )
+            self._insert('ChatParticipantRights', values)
 
     def dump_media(self, media, media_type=None):
         """Dump a MessageMedia into the Media table
@@ -832,6 +900,7 @@ class Dumper:
             fmt = ','.join('?' * len(values))
             c = self.conn.execute("INSERT OR REPLACE INTO {} VALUES ({})"
                                   .format(into, fmt), values)
+            self.conn.commit()
             return c.lastrowid
         except sqlite3.IntegrityError as error:
             self.conn.rollback()

@@ -40,10 +40,12 @@ class Downloader:
     Download dialogs and their associated data, and dump them.
     Make Telegram API requests and sleep for the appropriate time.
     """
+
     def __init__(self, client, config, dumper, loop):
         self.client = client
         self.loop = loop or asyncio.get_event_loop()
         self.max_size = config.getint('MaxSize')
+        self.config_download_media = config.getint('DownloadMedia')
         self.types = {x.strip().lower()
                       for x in (config.get('MediaWhitelist') or '').split(',')
                       if x.strip()}
@@ -80,6 +82,8 @@ class Downloader:
         """
         Checks whether the given MessageMedia should be downloaded or not.
         """
+        # size = getattr(getattr(media, 'document', None), 'size', None)
+        # if not media or not self.max_size or size > self.max_size:
         if not media or not self.max_size:
             return False
         if not self.types:
@@ -217,6 +221,8 @@ class Downloader:
 
     async def _download_media(self, media_id, context_id, sender_id, date,
                               bar):
+        if not self.config_download_media:
+            return None
         media_row = self.dumper.conn.execute(
             'SELECT LocalID, VolumeID, Secret, Type, MimeType, Name, Size '
             'FROM Media WHERE ID = ?', (media_id,)
@@ -226,7 +232,7 @@ class Downloader:
         media_type = media_row[3].split('.')
         media_type, media_subtype = media_type[0], media_type[-1]
         if media_type not in ('photo', 'document'):
-            return  # Only photos or documents are actually downloadable
+            return False  # Only photos or documents are actually downloadable
 
         formatter = defaultdict(
             str,
@@ -260,7 +266,7 @@ class Downloader:
         filename += '.{}{}'.format(media_id, ext)
         if os.path.isfile(filename):
             __log__.debug('Skipping already-existing file %s', filename)
-            return
+            return False
 
         __log__.debug('Downloading to %s', filename)
         os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -294,24 +300,27 @@ class Downloader:
         if media_row[6] is not None:
             bar.total += media_row[6]
 
-        self._incomplete_download = filename
-        await self.client.download_file(
-            location, file=filename, file_size=media_row[6],
-            part_size_kb=DOWNLOAD_PART_SIZE // 1024,
-            progress_callback=progress
-        )
+        # self._incomplete_download = filename
+        # await self.client.download_file(
+        #     location, file=filename, file_size=media_row[6],
+        #     part_size_kb=DOWNLOAD_PART_SIZE // 1024,
+        #     progress_callback=progress
+        # )
         self._incomplete_download = None
+        return True
 
     async def _media_consumer(self, queue, bar):
         while self._running:
             start = time.time()
             media_id, context_id, sender_id, date = await queue.get()
-            await self._download_media(media_id, context_id, sender_id,
-                                       datetime.datetime.utcfromtimestamp(date),
-                                       bar)
+            need_sleep = await self._download_media(media_id, context_id, sender_id,
+                                                    datetime.datetime.utcfromtimestamp(
+                                                        date),
+                                                    bar)
             queue.task_done()
-            await asyncio.sleep(max(MEDIA_DELAY - (time.time() - start), 0),
-                                loop=self.loop)
+            if need_sleep:
+                await asyncio.sleep(max(MEDIA_DELAY - (time.time() - start), 0),
+                                    loop=self.loop)
 
     async def _user_consumer(self, queue, bar):
         while self._running:
@@ -449,6 +458,8 @@ class Downloader:
                 try:
                     __log__.info('Getting participants...')
                     participants = await self.client.get_participants(target_in)
+                    self.dumper.dump_participants_rigths(
+                        target_id, participants)
                     added, removed = self.dumper.dump_participants_delta(
                         target_id, ids=[x.id for x in participants]
                     )
@@ -515,7 +526,8 @@ class Downloader:
                 # the highest ID ("closest" bound we need to reach), stop.
                 if count < req.limit or req.offset_id <= stop_at:
                     __log__.debug('Received less messages than limit, done.')
-                    max_id = self.dumper.get_max_message_id(target_id) or 0 # can't have NULL
+                    max_id = self.dumper.get_max_message_id(
+                        target_id) or 0  # can't have NULL
                     self.dumper.save_resume(target_id, stop_at=max_id)
                     break
 
